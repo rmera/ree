@@ -48,6 +48,16 @@ type M struct {
 	V float64
 }
 
+// A small function to log the temperatures by which our "Reference" system goes.
+//It will print a message at verbose level "2" if a switch happens involving the reference temperature.
+func SignalT(T1, T2, Tref float64) {
+	if T1 == Tref {
+		LogV(2, "T exchanged:", T2)
+	} else if T2 == Tref {
+		LogV(2, "T exchanged:", T1)
+	}
+}
+
 //temps should be sorted!
 func MDs(mol *chem.Molecule, ctime, ttime int, method string, temps []float64, dielectric float64, cpus int) {
 	//hopefully this seed is good enough.
@@ -107,6 +117,8 @@ func MDs(mol *chem.Molecule, ctime, ttime int, method string, temps []float64, d
 				Hs[i].C.newT <- Hs[i-1].CurrT
 				Hs[i-1].C.newT <- Hs[i].CurrT
 				Hs[i-1].Switched = true
+				SignalT(Hs[i].CurrT, Hs[i-1].CurrT, Tref)
+
 			} else {
 				Hs[i].C.newT <- Hs[i].CurrT
 
@@ -290,9 +302,9 @@ func RunReplica(R *Replica, method string, ReadMol *chem.Molecule, cpus int) {
 		cq.Run()
 		err = ScaleVel(lastT, newT, ReadMol.Len(), dirname)
 		CErr(err, fmt.Sprintf("Worker %d, while scaling chunk %d from %5.3f to %5.3f", R.ID, len(R.PrevTs), lastT, newT))
-		cq = exec.Command("sh", "-c", fmt.Sprintf("cp mdrestart mdrestartRM_%d_%5.2f", len(R.PrevTs), lastT)) ///////
-		cq.Dir = dirname                                                                                      ////////////
-		cq.Run()                                                                                              //////////
+		//		cq = exec.Command("sh", "-c", fmt.Sprintf("cp mdrestart mdrestartRM_%d_%5.2f", len(R.PrevTs), lastT)) ///////
+		//		cq.Dir = dirname                                                                                      ////////////
+		//		cq.Run()                                                                                              //////////
 
 		R.PrevTs = append(R.PrevTs, newT)
 
