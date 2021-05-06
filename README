@@ -1,0 +1,7 @@
+REE, the Replica Exchange Engine
+
+REE is a program that performs Replica Exchange MD simulations
+using an external engine. At his point, only the xtb program 
+from the Grimme group is supported.
+
+REE is open source. See the LICENSE file for details.

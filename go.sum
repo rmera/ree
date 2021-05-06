@@ -22,8 +22,6 @@ github.com/pkg/errors v0.9.1/go.mod h1:bwawxfHBFNV+L2hUp1rHADufV3IMtnDRdf1r5NINE
 github.com/pmezard/go-difflib v1.0.0/go.mod h1:iKH77koFhYxTK1pcRnkKkqfTogsbg7gZNVY4sRDYZ/4=
 github.com/rmera/gochem v0.6.1 h1:DQKryL0yNDBfo0DFwVb0KZvqWxaLEMSl/k1yceF4b+8=
 github.com/rmera/gochem v0.6.1/go.mod h1:J9VEVm1CiMkOSCBoMWkvHWv/ZM4HFKMAlahX8XQGavc=
-github.com/rmera/scu v0.0.0-20141011003137-5f665ea20cce h1:CduwT0Cxt/DKDSbb4/NtgU9H0aQS25ekk5zu4yEk5Wc=
-github.com/rmera/scu v0.0.0-20141011003137-5f665ea20cce/go.mod h1:4ev5bGOsKrx6BIcHCkPoZG5adRrbMAJKanrJRCQMhEc=
 github.com/ruudk/golang-pdf417 v0.0.0-20181029194003-1af4ab5afa58/go.mod h1:6lfFZQK844Gfx8o5WFuvpxWRwnSoipWe/p622j1v06w=
 github.com/skelterjohn/go.matrix v0.0.0-20130517144113-daa59528eefd h1:+ZLYzP9SYC3WU9buyb9H0l9DQxqVFOCkDG8QnNBMAlA=
 github.com/skelterjohn/go.matrix v0.0.0-20130517144113-daa59528eefd/go.mod h1:x7ui0Rh4QxcWEOgIfa3cr9q4W/wyLTDdzISxBmLVeX8=
