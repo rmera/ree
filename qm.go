@@ -58,7 +58,9 @@ func SignalT(T1, T2, Tref float64) {
 	}
 }
 
-//temps should be sorted!
+//This is the "central control" that holds the info for all the replicas, runs them
+//collect their outputs, decides whether each pair should switch temperatures, and, if so,
+//sends each its new T. It also deals with the action needed when all replicas finish running.
 func MDs(mol *chem.Molecule, ctime, ttime int, method string, temps []float64, dielectric float64, cpus int) {
 	//hopefully this seed is good enough.
 	rand.Seed(time.Now().UTC().UnixNano())
@@ -92,23 +94,27 @@ func MDs(mol *chem.Molecule, ctime, ttime int, method string, temps []float64, d
 	mol.Coords[0], err = xtb.OptimizedGeometry(mol)
 	CErr(err, "Initial optimization failed")
 	for {
+		//Note that we don't use "select"; we wait until all workers are
+		//ready before starting the next cycle. This is how we ensure synchronization.
 		for _, v := range Hs {
 			tv := <-v.C.repdata
 			v.CurrT = tv[0]
 			v.CurrP = tv[1]
 		}
-		//after we have received from all workers, if one is finished they should all be
-		//since we have made sure we receive from all of them on each turn, so each worker
-		//should be always on the same turn
-		//a Temperature <=0 signals that we are ready.
+
+		//a Temperature <=0 signals that
+		//workers reached the end of the total simulation time.
 		if Hs[0].CurrT <= 0 {
 			break
 		}
 		sort.Sort(Hs)
-		//we iterat the list from higher to lowe temperature
+		//we iterate the list from higher to lowe temperature
 		//we need i>0 because we will be
 		//using both i and i-1
 		for i := len(Hs) - 1; i > 0; i-- {
+			//when we get to the "i" replica (save for i==len(Hs)-1) the replica could have already
+			//exchanged T with the i+1 one. If that happened (which Hs[i].Switched marks), we do not
+			//attempt to exchange it with i-1.
 			if Hs[i].Switched {
 				continue
 			}
@@ -125,7 +131,7 @@ func MDs(mol *chem.Molecule, ctime, ttime int, method string, temps []float64, d
 			}
 
 		}
-		//since the previous look reaches up to Hs[1], it that last element doesn't switch with Hs[0], the latter will not get the "continue" signal
+		//since the previous look only reaches down to Hs[1], if Hs[1] doesn't switch with Hs[0], Hs[0] will not get the "continue" signal
 		//and will get stuck, so here we send the signal by hand if that happened.
 		if !Hs[0].Switched {
 			Hs[0].C.newT <- Hs[0].CurrT
@@ -137,7 +143,7 @@ func MDs(mol *chem.Molecule, ctime, ttime int, method string, temps []float64, d
 		//	panic("V") ///////
 
 	}
-	//Now we need to stich together the different parts of the trajectory at the lowest T, which will be our final traj.
+	//Now we need to stitch together the different parts of the trajectory at the lowest T, which will be our final traj.
 	cq := exec.Command("sh", "-c", "cat *.trj > fulltraj.xyz")
 	cq.Run()
 
@@ -157,6 +163,8 @@ func Metropolis(i, j *M) float64 {
 
 }
 
+//This structure contain the two channels each replica has to communicate with the "control center"
+//newT where it gets the new temperature from "control" and repdata, where it sends it data to control.
 type com struct {
 	newT    chan float64   //The program will send the new temperature to the gorutine
 	repdata chan []float64 // Signals the gorutine is waiting for information to arrive on the T channel. A "false" value means the gorutine has finished (and the channel, closed).
@@ -181,6 +189,9 @@ func Newcom() *com {
 	return c
 }
 
+//This structure  has the "control side" info for each replica.
+//The C set of channels is shared with the "replica side"
+//structure, so control and replicas can communicate.
 type RHandler struct {
 	ID       int
 	C        *com
@@ -211,6 +222,9 @@ func (H Handlers) Swap(i, j int) {
 	H[i], H[j] = H[j], H[i]
 }
 
+//This is the "replica side" information for each replica
+//the C set of channels is shared with the corresponding "control side" RHandler
+//structure, so both sides can communicate.
 type Replica struct {
 	ID      int
 	T       float64 //The current temperature
@@ -263,7 +277,7 @@ func RunReplica(R *Replica, method string, ReadMol *chem.Molecule, cpus int) {
 		lastT := R.PrevTs[len(R.PrevTs)-1]
 		elapsed += R.Time
 		if lastT == R.Tref {
-			os.Rename(dirname+"/xtb.trj", fmt.Sprintf("xtb_%06d_%5.2f_.trj", len(R.PrevTs), lastT))
+			os.Rename(dirname+"/xtb.trj", fmt.Sprintf("xtb_%08d_%5.2f_.trj", len(R.PrevTs), lastT))
 			weaita, _ := os.Create(fmt.Sprintf("%s/%06d", dirname, len(R.PrevTs)))
 			weaita.Close()
 			//	cq := exec.Command("sh", "-c", fmt.Sprintf("cp xtb.trj xtb_%d_%5.2f_.trj", len(R.PrevTs), lastT)) //yeah, I'm lazy. Also this is Unix-only program anyway
@@ -388,7 +402,7 @@ func scaleline(s string, scalefac float64) ([]float64, error) {
 
 }
 
-//scales all velocities by Tnew/Told
+//scales all velocities by Tnew/Told as required by the RE protocol.
 //note that it is the modulus of the velofity that needs to be scaled!
 func ScaleVel(oldT, newT float64, mollen int, dirname string) error {
 	scalefac := math.Sqrt(newT / oldT)
