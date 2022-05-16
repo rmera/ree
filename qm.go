@@ -74,7 +74,7 @@ func MDs(mol *chem.Molecule, ctime, ttime int, method string, temps []float64, d
 		h := NewRHandler(i, v)
 		Hslice = append(Hslice, h)
 	}
-	//Now we prepare an lauch the replicas. Scary stuff
+	//Now we prepare an launch the replicas. Scary stuff
 	Hs := Handlers(Hslice)
 	for _, v := range Hs {
 		R := &Replica{ID: v.ID, T: v.CurrT, Time: ctime, TotTime: ttime, epsilon: dielectric, C: v.C, Tref: Tref}
@@ -93,6 +93,13 @@ func MDs(mol *chem.Molecule, ctime, ttime int, method string, temps []float64, d
 	var err error
 	mol.Coords[0], err = xtb.OptimizedGeometry(mol)
 	CErr(err, "Initial optimization failed")
+	NewEven := func(even bool) bool {
+		if even {
+			return false
+		}
+		return true
+	}
+	var even bool = true
 	for {
 		//Note that we don't use "select"; we wait until all workers are
 		//ready before starting the next cycle. This is how we ensure synchronization.
@@ -107,29 +114,46 @@ func MDs(mol *chem.Molecule, ctime, ttime int, method string, temps []float64, d
 		if Hs[0].CurrT <= 0 {
 			break
 		}
+		//From now on, Hs are sorted by temperature
 		sort.Sort(Hs)
 		//we iterate the list from higher to lowe temperature
 		//we need i>0 because we will be
 		//using both i and i-1
+
 		for i := len(Hs) - 1; i > 0; i-- {
+
+			//In the new system, even i's exchange on even cycles
+			//odd i's exchange on odd cycles. NewEven is the function
+			//that ensures that "even" is true on even cycles and false
+			//on odd cycles. With this system, we try to approach
+			//Gromac's behaviour.
+			if i%2 != 0 && even {
+				continue
+			} else if i%2 == 0 && !even {
+				continue
+			}
+
+			/**********This is the old system **********/
 			//when we get to the "i" replica (save for i==len(Hs)-1) the replica could have already
 			//exchanged T with the i+1 one. If that happened (which Hs[i].Switched marks), we do not
 			//attempt to exchange it with i-1.
-			if Hs[i].Switched {
-				continue
-			}
+			//if Hs[i].Switched || Hs[i].SwitchedPrev {
+			//	continue
+			//}
+			/*******End old system********************/
 			p := Metropolis(&M{T: Hs[i].CurrT, V: Hs[i].CurrP}, &M{T: Hs[i-1].CurrT, V: Hs[i-1].CurrP})
 			if p == 1 || rand.Float64() < p {
 				Hs[i].C.newT <- Hs[i-1].CurrT
 				Hs[i-1].C.newT <- Hs[i].CurrT
-				Hs[i-1].Switched = true
+				Hs[i-1].Switched = true //these things are remanants of the old system. I'll just leave them for now.
+				Hs[i].SwitchedPrev = true
 				SignalT(Hs[i].CurrT, Hs[i-1].CurrT, Tref)
 
 			} else {
 				Hs[i].C.newT <- Hs[i].CurrT
 
 			}
-
+			even = NewEven(even) //if even was true, it becomes false, and vice versa
 		}
 		//since the previous look only reaches down to Hs[1], if Hs[1] doesn't switch with Hs[0], Hs[0] will not get the "continue" signal
 		//and will get stuck, so here we send the signal by hand if that happened.
@@ -193,11 +217,12 @@ func Newcom() *com {
 //The C set of channels is shared with the "replica side"
 //structure, so control and replicas can communicate.
 type RHandler struct {
-	ID       int
-	C        *com
-	CurrT    float64
-	CurrP    float64
-	Switched bool
+	ID           int
+	C            *com
+	CurrT        float64
+	CurrP        float64
+	Switched     bool
+	SwitchedPrev bool
 }
 
 func NewRHandler(ID int, initemp float64) *RHandler {
