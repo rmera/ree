@@ -94,12 +94,10 @@ func MDs(mol *chem.Molecule, ctime, ttime int, method string, temps []float64, d
 	mol.Coords[0], err = xtb.OptimizedGeometry(mol)
 	CErr(err, "Initial optimization failed")
 	NewEven := func(even bool) bool {
-		if even {
-			return false
-		}
-		return true
+		return !even
 	}
 	var even bool = true
+	var term bool
 	for {
 		//Note that we don't use "select"; we wait until all workers are
 		//ready before starting the next cycle. This is how we ensure synchronization.
@@ -107,11 +105,18 @@ func MDs(mol *chem.Molecule, ctime, ttime int, method string, temps []float64, d
 			tv := <-v.C.repdata
 			v.CurrT = tv[0]
 			v.CurrP = tv[1]
+			//a Temperature <=0 signals that
+			//workers reached the end of the total simulation time.
+			if v.CurrT <= 0 {
+				term = true
+			}
+
 		}
 
-		//a Temperature <=0 signals that
-		//workers reached the end of the total simulation time.
-		if Hs[0].CurrT <= 0 {
+		if term {
+			for _, v := range Hs {
+				v.C.Close()
+			}
 			break
 		}
 		//From now on, Hs are sorted by temperature
@@ -326,7 +331,7 @@ func RunReplica(R *Replica, method string, ReadMol *chem.Molecule, cpus int) {
 		//	cq.Run()                                                                                             //////////
 		if elapsed >= R.TotTime {
 			R.C.repdata <- []float64{-1, -1}
-			R.C.Close()
+			//R.C.Close()
 			break
 		}
 		pot, err := lastPot(xtbsp, ReadMol, dirname)
@@ -380,7 +385,7 @@ func lastGeo(mol *chem.Molecule, dirname string) error {
 	for i := 0; i < mol.Len(); i++ {
 		line, err := bfin.ReadString('\n')
 		if err != nil {
-			return err //I *think* I should never find an EOF since I know the file should be mollen lines, so this error should be always bad.
+			return err //I *think* I should never find an EOF since I know the file should be mol.Len() lines, so this error should be always bad.
 		}
 		p, err := scaleline(line, 1)
 		if err != nil {
