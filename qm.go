@@ -84,7 +84,7 @@ func MDs(mol *chem.Molecule, ctime, ttime int, method string, temps []float64, d
 	//the preopt
 	Q := new(qm.Calc)
 	Q.Method = method
-	Q.Job = qm.Job{Opti: true}
+	Q.Job = &qm.Job{Opti: true}
 	Q.Dielectric = dielectric
 	xtb := qm.NewXTBHandle()
 	xtb.SetnCPU(cpus)
@@ -93,21 +93,20 @@ func MDs(mol *chem.Molecule, ctime, ttime int, method string, temps []float64, d
 	var err error
 	mol.Coords[0], err = xtb.OptimizedGeometry(mol)
 	CErr(err, "Initial optimization failed")
-	NewEven := func(even bool) bool {
-		return !even
-	}
 	var even bool = true
 	var term bool
 	for {
 		//Note that we don't use "select"; we wait until all workers are
 		//ready before starting the next cycle. This is how we ensure synchronization.
-		for _, v := range Hs {
+		for i, v := range Hs {
 			tv := <-v.C.repdata
-			v.CurrT = tv[0]
-			v.CurrP = tv[1]
+			Hs[i].CurrT = tv[0]
+			Hs[i].CurrP = tv[1]
+			//		fmt.Println("Replica", v.ID, "T:", tv[0], "P:", tv[1]) /////////////////////////////////////
 			//a Temperature <=0 signals that
 			//workers reached the end of the total simulation time.
 			if v.CurrT <= 0 {
+				//			fmt.Println("Replica", v.ID, "finished") /////////////////////////////////
 				term = true
 			}
 
@@ -117,6 +116,7 @@ func MDs(mol *chem.Molecule, ctime, ttime int, method string, temps []float64, d
 			for _, v := range Hs {
 				v.C.Close()
 			}
+			//		fmt.Println("We should be done") ////////////////////////////////////////
 			break
 		}
 		//From now on, Hs are sorted by temperature
@@ -124,20 +124,21 @@ func MDs(mol *chem.Molecule, ctime, ttime int, method string, temps []float64, d
 		//we iterate the list from higher to lowe temperature
 		//we need i>0 because we will be
 		//using both i and i-1
-
+		//	fmt.Println("There are", len(Hs), "replicas") ////////////////////////////////////////
 		for i := len(Hs) - 1; i > 0; i-- {
-
+			//		fmt.Println("Might process i:", i, "even is", even) ////////////////////////////////////////
 			//In the new system, even i's exchange on even cycles
 			//odd i's exchange on odd cycles. NewEven is the function
 			//that ensures that "even" is true on even cycles and false
 			//on odd cycles. With this system, we try to approach
 			//Gromac's behaviour.
-			if i%2 != 0 && even {
-				continue
-			} else if i%2 == 0 && !even {
+			if i%2 != 0 && even || i%2 == 0 && !even {
+				if i == len(Hs)-1 {
+					Hs[i].C.newT <- Hs[i].CurrT //This one would never get a new temperature otherwise.
+				}
 				continue
 			}
-
+			//	fmt.Print("i:", i, "WILL be processed") ////////////////////////////////////////
 			/**********This is the old system **********/
 			//when we get to the "i" replica (save for i==len(Hs)-1) the replica could have already
 			//exchanged T with the i+1 one. If that happened (which Hs[i].Switched marks), we do not
@@ -148,21 +149,29 @@ func MDs(mol *chem.Molecule, ctime, ttime int, method string, temps []float64, d
 			/*******End old system********************/
 			p := Metropolis(&M{T: Hs[i].CurrT, V: Hs[i].CurrP}, &M{T: Hs[i-1].CurrT, V: Hs[i-1].CurrP})
 			if p == 1 || rand.Float64() < p {
+				//			fmt.Println("First Replica", Hs[i].ID, "about to get a T") ///////////////////////
 				Hs[i].C.newT <- Hs[i-1].CurrT
+				//		fmt.Println("Now Replica", Hs[i-1].ID, "about to get a T") ///////////////////////
 				Hs[i-1].C.newT <- Hs[i].CurrT
 				Hs[i-1].Switched = true //these things are remanants of the old system. I'll just leave them for now.
 				Hs[i].SwitchedPrev = true
 				SignalT(Hs[i].CurrT, Hs[i-1].CurrT, Tref)
 
 			} else {
+				//		fmt.Println("First not-switched Replica", Hs[i].ID, "about to get a T") ///////////////////////
 				Hs[i].C.newT <- Hs[i].CurrT
+				//		fmt.Println("Second not-switched Replica", Hs[i-1].ID, "about to get a T") ///////////////////////
+				Hs[i-1].C.newT <- Hs[i-1].CurrT //not sure about this one
+				Hs[i-1].Switched = true         //I'm just marking that they were activated, even if not really switched. I'll rename this variable, I promise.
+				Hs[i].SwitchedPrev = true
 
 			}
-			even = NewEven(even) //if even was true, it becomes false, and vice versa
 		}
+		even = !even //if even was true, it becomes false, and vice versa
 		//since the previous look only reaches down to Hs[1], if Hs[1] doesn't switch with Hs[0], Hs[0] will not get the "continue" signal
 		//and will get stuck, so here we send the signal by hand if that happened.
 		if !Hs[0].Switched {
+			//	fmt.Println("The replica 0,", Hs[0].ID, "is about to get a T") ///////////////////////
 			Hs[0].C.newT <- Hs[0].CurrT
 		}
 		//We need to reset the "Switched" now, so we can start the next cycle
@@ -170,6 +179,8 @@ func MDs(mol *chem.Molecule, ctime, ttime int, method string, temps []float64, d
 			v.Switched = false
 		}
 		//	panic("V") ///////
+		//	time.Sleep(2 * time.Second)                                                    ///////////////////////////////////////////////////////////
+		//	fmt.Println("***\n All replicas got a T. This cycle is finishesd!!!!!\n***\n") //////////////////
 
 	}
 	//Now we need to stitch together the different parts of the trajectory at the lowest T, which will be our final traj.
@@ -213,8 +224,8 @@ func (C *com) Close() {
 func Newcom() *com {
 	c := new(com)
 	//they need to be buffered
-	c.newT = make(chan float64, 1)
-	c.repdata = make(chan []float64, 1)
+	c.newT = make(chan float64)
+	c.repdata = make(chan []float64)
 	return c
 }
 
@@ -283,7 +294,7 @@ func RunReplica(R *Replica, method string, ReadMol *chem.Molecule, cpus int) {
 	}
 	Q := new(qm.Calc)
 	Q.Method = method
-	Q.Job = qm.Job{MD: true}
+	Q.Job = &qm.Job{MD: true}
 	Q.MDTime = R.Time
 	Q.MDTemp = R.T
 	Q.Dielectric = R.epsilon
@@ -294,7 +305,7 @@ func RunReplica(R *Replica, method string, ReadMol *chem.Molecule, cpus int) {
 	//the input for the single point1
 	Qsp := new(qm.Calc)
 	Qsp.Method = method
-	Qsp.Job = qm.Job{SP: true}
+	Qsp.Job = &qm.Job{SP: true}
 	xtbsp := qm.NewXTBHandle()
 	xtbsp.SetnCPU(cpus)
 	xtbsp.SetName("SP")
@@ -302,6 +313,7 @@ func RunReplica(R *Replica, method string, ReadMol *chem.Molecule, cpus int) {
 	xtbsp.BuildInput(ReadMol.Coords[0], ReadMol, Qsp)
 	elapsed := 0
 	R.PrevTs = append(R.PrevTs, R.T)
+	var newT float64
 	for {
 		xtb.Run(true)
 		lastT := R.PrevTs[len(R.PrevTs)-1]
@@ -315,7 +327,7 @@ func RunReplica(R *Replica, method string, ReadMol *chem.Molecule, cpus int) {
 			//	cq.Dir = dirname
 			//	cq.Run()
 		} else {
-			os.Remove(dirname + "/xtb.trj")
+			os.Remove(dirname + "/xtb.trj") //This should be able to be switched off with an option
 		}
 		//We will try to remove scoord files left by xtb, but if it doesn't work, it doesn't work
 		//the program will just keep running.
@@ -337,7 +349,9 @@ func RunReplica(R *Replica, method string, ReadMol *chem.Molecule, cpus int) {
 		pot, err := lastPot(xtbsp, ReadMol, dirname)
 		CErr(err, fmt.Sprintf("Worker %d, while obtaining the last potential energy of chunk %d from %5.3f", R.ID, len(R.PrevTs), lastT))
 		R.C.repdata <- []float64{lastT, pot}
-		newT := <-R.C.newT
+		//	fmt.Println("Hi, I'm worker", R.ID, "and I'm waiting for a new temperature") /////////////////
+		newT = <-R.C.newT
+		//	fmt.Println("Hi, I'm worker", R.ID, "and I just got a new T", newT) /////////////////
 		//Maybe this is too dirty. When the program actually works I'll consider switching this for a proper Go function.
 		//lol who am I kidding.
 		cq := exec.Command("sh", "-c", fmt.Sprintf("sed -i s/temp=%5.2f/temp=%5.2f/g %s/gochem.inp", lastT, newT, dirname))
@@ -349,7 +363,6 @@ func RunReplica(R *Replica, method string, ReadMol *chem.Molecule, cpus int) {
 		//		cq = exec.Command("sh", "-c", fmt.Sprintf("cp mdrestart mdrestartRM_%d_%5.2f", len(R.PrevTs), lastT)) ///////
 		//		cq.Dir = dirname                                                                                      ////////////
 		//		cq.Run()                                                                                              //////////
-
 		R.PrevTs = append(R.PrevTs, newT)
 
 	}
@@ -365,7 +378,6 @@ func lastPot(xtbsp *qm.XTBHandle, molR *chem.Molecule, dirname string) (float64,
 	}
 	xtbsp.Run(true)
 	return xtbsp.Energy()
-
 }
 
 //Creates a "SP.xyz"  file with the last coordinates from an xtb MD simulation
