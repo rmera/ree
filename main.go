@@ -62,14 +62,14 @@ func main() {
 	//There will be _tons_ of flags, but they are meant not to be needed the 99% of the time.
 	method := flag.String("method", "gfnff", "the xTB method for the simulation")
 	cpus := flag.Int("cpus", -1, "the total CPUs used for the QM calculations. If a number <0 is given, all logical CPUs are used")
-	nreps := flag.Int("replicas", 5, "Maximum amount of replicas to be used. It might not be reached") //this default is for testing, it should probably be changed for production.
+	nreps := flag.Int("replicas", 10, "Maximum amount of replicas to be used. It might not be reached") //this default is for testing, it should probably be changed for production.
 	multi := flag.Int("multi", 1, "multiplicity of the system")
 	keeptrj := flag.Bool("keeptrj", false, "Keep the trjs for the reference temperature in the main directory")
 	charge := flag.Int("charge", 0, "charge for the system")
 	verbose := flag.Int("verbose", 1, "Level of verbosity, the higher, the more verbose.")
 	exrate := flag.Int("exchangerate", 2, "Every how many ps should replica exchanges be attempted?")
 	Tc := flag.Float64("tref", 310.15, "The temperature of the 'reference' or coldest replica")
-	Th := flag.Float64("maxt", 400.15, "The highest temperature allowed for a replica. It might not be reached.")
+	Th := flag.Float64("maxt", 453.15, "The highest temperature allowed for a replica. It might not be reached.")
 	dielectric := flag.Float64("dielectric", 80.0, "The dielectric constant for continuum solvent in QM calculations. Only some values are allowed (see code) -1 for vacuum calculations. Default is acetone")
 	flag.Parse()
 	fmt.Println("REE: Performs a replica exchange simulation with xtb")
