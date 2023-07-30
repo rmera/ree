@@ -40,7 +40,9 @@ import (
 	chem "github.com/rmera/gochem"
 )
 
-//Global variables... Sometimes, you gotta use'em
+//This is the verbosity level. It is set by the -verbose flag
+//I don't want to pass it around to every single function, so
+//I just make it global.
 var vref int
 
 //If v is true, prints the d arguments to stderr
@@ -52,6 +54,7 @@ func LogV(v int, d ...interface{}) {
 
 }
 
+//Just crashes the program with an error
 func CErr(err error, info string) {
 	if err != nil {
 		log.Fatal(err, info)
@@ -59,7 +62,7 @@ func CErr(err error, info string) {
 }
 
 func main() {
-	//There will be _tons_ of flags, but they are meant not to be needed the 99% of the time.
+	//There are a few options, most of them not needed normally.
 	method := flag.String("method", "gfnff", "the xTB method for the simulation")
 	cpus := flag.Int("cpus", -1, "the total CPUs used for the QM calculations. If a number <0 is given, all logical CPUs are used")
 	nreps := flag.Int("replicas", 10, "Maximum amount of replicas to be used. It might not be reached") //this default is for testing, it should probably be changed for production.
@@ -85,6 +88,7 @@ func main() {
 	totaltime, err := strconv.Atoi(args[1])
 	CErr(err, "main")
 	//fmt.Printf("Use:\n  $REPATH/xtbRE [FLAGS] geometry mdtime \n")
+	//We read the initial structure to a goChem molecule.
 	var mol *chem.Molecule
 	extension := strings.ToLower(strings.Split(geoname, ".")[1])
 	switch extension {
@@ -96,14 +100,13 @@ func main() {
 		mol, err = chem.XYZFileRead(geoname)
 	}
 	CErr(err, "main")
-	mol.SetCharge(*charge) //needed for the MD and the partial charges calculation
-	mol.SetMulti(*multi)
-	temps := GenTemps(*Tc, *Th, *nreps, mol.Len())
+	mol.SetCharge(*charge)                         //needed for the MD and the partial charges calculation
+	mol.SetMulti(*multi)                           //the multiplicity.
+	temps := GenTemps(*Tc, *Th, *nreps, mol.Len()) //generates the temperatures for the replicas.
+	//the function is a bit below in this same file.
+
 	LogV(1, "Temperatures:", temps)
-	//	temps := make([]float64, 0, (int(*Th)-int(*Tc))/int(*tempinterval)+2)
-	//	for i := 0.0; i+*Tc <= *Th; i += *tempinterval {
-	//		temps = append(temps, *Tc+i)
-	//	}
+
 	if *cpus < 0 {
 		*cpus = runtime.NumCPU()
 	}
@@ -125,7 +128,8 @@ func main() {
 
 //Gen temps generates nreps-1 temperatures for the RE procedure
 //given the first one, Tc, and the number of atoms in the system.
-//It uses the procedure outlined in the Gromacs 2021.1 Manual, p340
+//It uses (or so I hope!) the procedure outlined in the Gromacs
+//2021.1 Manual, p340
 func GenTemps(Tc, Th float64, nreps, natoms int) []float64 {
 	temps := make([]float64, 1, nreps)
 	temps[0] = Tc

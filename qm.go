@@ -41,8 +41,9 @@ import (
 	"github.com/rmera/gochem/qm"
 )
 
-//This has been tested and seems to work fine.
+//This file contains all the tricky stuff.
 
+//This structure is used to pass the temperature and potential energy of a replica to the "control center"
 type M struct {
 	T float64
 	V float64
@@ -58,17 +59,36 @@ func SignalT(T1, T2, Tref float64) {
 	}
 }
 
-//This is the "central control" that holds the info for all the replicas, runs them
+//This is the "central control" that holds the info for all the replicas, runs them,
 //collect their outputs, decides whether each pair should switch temperatures, and, if so,
 //sends each its new T. It also deals with the action needed when all replicas finish running.
 func MDs(mol *chem.Molecule, ctime, ttime int, method string, temps []float64, dielectric float64, cpus int) {
 	//hopefully this seed is good enough.
 	rand.Seed(time.Now().UTC().UnixNano())
-	Tref := temps[0] //This is the reference T, the simulation at this T is the one we actually care about.
-	rcpus := cpus / len(temps)
+	Tref := temps[0]           //This is the reference T, the simulation at this T is the one we actually care about.
+	rcpus := cpus / len(temps) //I'm glad past me was smart enough to do this.
 	if rcpus < 1 {
 		rcpus = 1
 	}
+
+	//for some reason, this was originally done _after_ the RunReplica functions were run
+	//I moved it to before that. because the original way seemed racy to me (it was not
+	//flagged as such by the race detector, though.)
+	Q := new(qm.Calc)
+	Q.Method = method
+	Q.Job = &qm.Job{Opti: true}
+	Q.Dielectric = dielectric
+	xtb := qm.NewXTBHandle()
+	xtb.SetnCPU(cpus)
+	xtb.BuildInput(mol.Coords[0], mol, Q)
+	xtb.Run(true) //true is wait for the QM program to finish before continuing execution.
+	var err error
+	mol.Coords[0], err = xtb.OptimizedGeometry(mol)
+	CErr(err, "Initial optimization failed")
+
+	//This is the slice of "control side". "handler" structures for each replica
+	//The handler are defined below, but they contain the replica ID, its current temperature,
+	//and the channels it uses to send and receive info to this function
 	Hslice := make([]*RHandler, 0, len(temps))
 	for i, v := range temps {
 		h := NewRHandler(i, v)
@@ -77,24 +97,21 @@ func MDs(mol *chem.Molecule, ctime, ttime int, method string, temps []float64, d
 	//Now we prepare an launch the replicas. Scary stuff
 	Hs := Handlers(Hslice)
 	for _, v := range Hs {
+		//we prepare each replica and launch it in a gorutine.
+		//the go statement means the RunReplica function runs concurrently/in parallel.
 		R := &Replica{ID: v.ID, T: v.CurrT, Time: ctime, TotTime: ttime, epsilon: dielectric, C: v.C, Tref: Tref}
 		go RunReplica(R, method, mol, rcpus)
 	}
-	//OK, now, way scarier, we need to goo on collecting data for all molecules in a loop, until we get "finishing" values
+	//OK, now, way scarier, we need to g o on collecting data for all molecules in a loop, until we get "finishing" values
 	//the preopt
-	Q := new(qm.Calc)
-	Q.Method = method
-	Q.Job = &qm.Job{Opti: true}
-	Q.Dielectric = dielectric
-	xtb := qm.NewXTBHandle()
-	xtb.SetnCPU(cpus)
-	xtb.BuildInput(mol.Coords[0], mol, Q)
-	xtb.Run(true)
-	var err error
-	mol.Coords[0], err = xtb.OptimizedGeometry(mol)
-	CErr(err, "Initial optimization failed")
+	//We set up a geometry optimization first, so all replicas start from that.
+
+	//we use Gromacs' system where we first exchange replicas in the "odd" positions, and then in the "even"
+	//positions, so temperatures can't "slide down" more than one step on each exchange cycle.
+	//the even variable will be used to keep track of this.
 	var even bool = true
 	var term bool
+	//Ok, now we start the "run" loop, where we
 	for {
 		//Note that we don't use "select"; we wait until all workers are
 		//ready before starting the next cycle. This is how we ensure synchronization.
@@ -102,31 +119,29 @@ func MDs(mol *chem.Molecule, ctime, ttime int, method string, temps []float64, d
 			tv := <-v.C.repdata
 			Hs[i].CurrT = tv[0]
 			Hs[i].CurrP = tv[1]
-			//		fmt.Println("Replica", v.ID, "T:", tv[0], "P:", tv[1]) /////////////////////////////////////
-			//a Temperature <=0 signals that
-			//workers reached the end of the total simulation time.
+			//workers signal the end of the total simulation time by sending a negative temperature.
+			//note that all workers run the same "step" on each cycle, as ensured by this for loop.
+			//so if one of them signals they reached the end, they all must have. That's why
+			//I set "term" to true with only one check.
 			if v.CurrT <= 0 {
-				//			fmt.Println("Replica", v.ID, "finished") /////////////////////////////////
 				term = true
 			}
 
 		}
-
 		if term {
+			//we just stop the whole thing. Clean up a bit, and "break" the loop.
 			for _, v := range Hs {
 				v.C.Close()
 			}
-			//		fmt.Println("We should be done") ////////////////////////////////////////
 			break
 		}
 		//From now on, Hs are sorted by temperature
+		//since the replicas exchange temperatures, we resort at every step.
 		sort.Sort(Hs)
 		//we iterate the list from higher to lowe temperature
 		//we need i>0 because we will be
 		//using both i and i-1
-		//	fmt.Println("There are", len(Hs), "replicas") ////////////////////////////////////////
 		for i := len(Hs) - 1; i > 0; i-- {
-			//		fmt.Println("Might process i:", i, "even is", even) ////////////////////////////////////////
 			//In the new system, even i's exchange on even cycles
 			//odd i's exchange on odd cycles. NewEven is the function
 			//that ensures that "even" is true on even cycles and false
@@ -138,7 +153,6 @@ func MDs(mol *chem.Molecule, ctime, ttime int, method string, temps []float64, d
 				}
 				continue
 			}
-			//	fmt.Print("i:", i, "WILL be processed") ////////////////////////////////////////
 			/**********This is the old system **********/
 			//when we get to the "i" replica (save for i==len(Hs)-1) the replica could have already
 			//exchanged T with the i+1 one. If that happened (which Hs[i].Switched marks), we do not
@@ -147,40 +161,36 @@ func MDs(mol *chem.Molecule, ctime, ttime int, method string, temps []float64, d
 			//	continue
 			//}
 			/*******End old system********************/
+			//here (and in the Metropolis function) we decide whether or not to exchange.
 			p := Metropolis(&M{T: Hs[i].CurrT, V: Hs[i].CurrP}, &M{T: Hs[i-1].CurrT, V: Hs[i-1].CurrP})
 			if p == 1 || rand.Float64() < p {
-				//			fmt.Println("First Replica", Hs[i].ID, "about to get a T") ///////////////////////
 				Hs[i].C.newT <- Hs[i-1].CurrT
-				//		fmt.Println("Now Replica", Hs[i-1].ID, "about to get a T") ///////////////////////
 				Hs[i-1].C.newT <- Hs[i].CurrT
 				Hs[i-1].Switched = true //these things are remanants of the old system. I'll just leave them for now.
 				Hs[i].SwitchedPrev = true
 				SignalT(Hs[i].CurrT, Hs[i-1].CurrT, Tref)
 
 			} else {
-				//		fmt.Println("First not-switched Replica", Hs[i].ID, "about to get a T") ///////////////////////
 				Hs[i].C.newT <- Hs[i].CurrT
-				//		fmt.Println("Second not-switched Replica", Hs[i-1].ID, "about to get a T") ///////////////////////
 				Hs[i-1].C.newT <- Hs[i-1].CurrT //not sure about this one
-				Hs[i-1].Switched = true         //I'm just marking that they were activated, even if not really switched. I'll rename this variable, I promise.
+				//same as above, the 2 next lines are remnants of the old system.
+				Hs[i-1].Switched = true //I'm just marking that they were activated, even if not really switched. I'll rename this variable, I promise.
 				Hs[i].SwitchedPrev = true
 
 			}
 		}
-		even = !even //if even was true, it becomes false, and vice versa
-		//since the previous look only reaches down to Hs[1], if Hs[1] doesn't switch with Hs[0], Hs[0] will not get the "continue" signal
+		even = !even //we need to change the even flag for the next cycle.
+		//now it'll be the odd ones turn to attempt exchange.
+
+		//since the previous loop only reaches down to Hs[1], if Hs[1] doesn't switch with Hs[0], Hs[0] will not get the "continue" signal
 		//and will get stuck, so here we send the signal by hand if that happened.
 		if !Hs[0].Switched {
-			//	fmt.Println("The replica 0,", Hs[0].ID, "is about to get a T") ///////////////////////
 			Hs[0].C.newT <- Hs[0].CurrT
 		}
 		//We need to reset the "Switched" now, so we can start the next cycle
 		for _, v := range Hs {
 			v.Switched = false
 		}
-		//	panic("V") ///////
-		//	time.Sleep(2 * time.Second)                                                    ///////////////////////////////////////////////////////////
-		//	fmt.Println("***\n All replicas got a T. This cycle is finishesd!!!!!\n***\n") //////////////////
 
 	}
 	//Now we need to stitch together the different parts of the trajectory at the lowest T, which will be our final traj.
@@ -251,14 +261,15 @@ func NewRHandler(ID int, initemp float64) *RHandler {
 
 type Handlers []*RHandler
 
+//The 3 following functions are needed for the sort.Sort function to work.
+//it just makes the structure "sortable" by temperature, they are not really
+//meant to be called directly by us.
 func (H Handlers) Less(i, j int) bool {
 	return H[i].CurrT < H[i].CurrT
 }
-
 func (H Handlers) Len() int {
 	return len(H)
 }
-
 func (H Handlers) Swap(i, j int) {
 	H[i], H[j] = H[j], H[i]
 }
@@ -292,6 +303,12 @@ func RunReplica(R *Replica, method string, ReadMol *chem.Molecule, cpus int) {
 	if err != nil && !strings.Contains(err.Error(), "file exists") { //If the dir was already there, we just continue.
 		CErr(err, "worker "+strconv.Itoa(R.ID))
 	}
+	//The following is the input for each MD run
+	//gochem uses 2 things to run a QM calculation. A "Calc" structure, which contains the info
+	//about the calculation (method, fixed atoms, etc) and a "QMHandle" which contains the info
+	//to handle each specific program (xtb in our case). the QMHandle uses the Calc structure
+	//and a molecular topology/geometry to build the input. The QMHandle also runs the program
+	//and collects (some of) the results.
 	Q := new(qm.Calc)
 	Q.Method = method
 	Q.Job = &qm.Job{MD: true}
@@ -302,10 +319,13 @@ func RunReplica(R *Replica, method string, ReadMol *chem.Molecule, cpus int) {
 	xtb.SetnCPU(cpus)
 	xtb.SetWorkDir(dirname)
 	xtb.BuildInput(ReadMol.Coords[0], ReadMol, Q)
-	//the input for the single point1
+	//The following is the input for the single point that we'll use to get the
+	//potential energy of the last geometry of a given MD run. We need that
+	//for the temperature exchange.
 	Qsp := new(qm.Calc)
 	Qsp.Method = method
 	Qsp.Job = &qm.Job{SP: true}
+	Qsp.Dielectric = R.epsilon
 	xtbsp := qm.NewXTBHandle()
 	xtbsp.SetnCPU(cpus)
 	xtbsp.SetName("SP")
@@ -315,60 +335,63 @@ func RunReplica(R *Replica, method string, ReadMol *chem.Molecule, cpus int) {
 	R.PrevTs = append(R.PrevTs, R.T)
 	var newT float64
 	for {
-		xtb.Run(true)
+		xtb.Run(true) //run the MD and wait for the xtb program to finish
 		lastT := R.PrevTs[len(R.PrevTs)-1]
 		elapsed += R.Time
 		if lastT == R.Tref {
+			//we are the reference simulation now. We need to save this part of the trajectory.
 			os.Rename(dirname+"/xtb.trj", fmt.Sprintf("xtb_%08d_%5.2f_.trj", len(R.PrevTs), lastT))
 			weaita, _ := os.Create(fmt.Sprintf("%s/%06d", dirname, len(R.PrevTs)))
 			weaita.Close()
-			//	cq := exec.Command("sh", "-c", fmt.Sprintf("cp xtb.trj xtb_%d_%5.2f_.trj", len(R.PrevTs), lastT)) //yeah, I'm lazy. Also this is Unix-only program anyway
 
-			//	cq.Dir = dirname
-			//	cq.Run()
 		} else {
-			os.Remove(dirname + "/xtb.trj") //This should be able to be switched off with an option
+			//It could be good to give a flag to skip removing these trajectories.
+			os.Remove(dirname + "/xtb.trj")
 		}
-		//We will try to remove scoord files left by xtb, but if it doesn't work, it doesn't work
-		//the program will just keep running.
+		//We will try to remove "garbage" scoord files left by xtb, but if it doesn't work,
+		//it doesn't work. The program will just keep running. We don't even catch the errors.
 		toremove, err := filepath.Glob(dirname + "/scoord*")
 		if err == nil {
 			for _, f := range toremove {
 				_ = os.Remove(f)
 			}
 		}
-
-		//	cq := exec.Command("sh", "-c", fmt.Sprintf("cp mdrestart mdrestart_%d_%5.2f", len(R.PrevTs), lastT)) ///////
-		//	cq.Dir = dirname                                                                                     ////////////
-		//	cq.Run()                                                                                             //////////
 		if elapsed >= R.TotTime {
-			R.C.repdata <- []float64{-1, -1}
-			//R.C.Close()
+			R.C.repdata <- []float64{-1, -1} //the whole simulation ended.
+			//This is signaled by returning negative temperature and potential energy.
+			//We then exit the loop.
 			break
 		}
+		//get the potential energy for the last geometry. I should be able to get it from the MD run
+		//but I just haven't been able to.
 		pot, err := lastPot(xtbsp, ReadMol, dirname)
 		CErr(err, fmt.Sprintf("Worker %d, while obtaining the last potential energy of chunk %d from %5.3f", R.ID, len(R.PrevTs), lastT))
 		R.C.repdata <- []float64{lastT, pot}
-		//	fmt.Println("Hi, I'm worker", R.ID, "and I'm waiting for a new temperature") /////////////////
-		newT = <-R.C.newT
-		//	fmt.Println("Hi, I'm worker", R.ID, "and I just got a new T", newT) /////////////////
-		//Maybe this is too dirty. When the program actually works I'll consider switching this for a proper Go function.
-		//lol who am I kidding.
+		newT = <-R.C.newT //we get our new temperature from the master function.
+		//We now need to change the temperature on the xtb input file to the new value
+		//which could be equal to the previous one, if this worker didn't exchange temperatures
+		//on this cycle.
+
+		//More recent note: There is actually a library that implements the functions of AWK into Go
+		//so it might actually be pretty easy to do this with Go functions. Still, using sed is dirty,
+		//but it does the job, and I suspect it's pretty fast.
 		cq := exec.Command("sh", "-c", fmt.Sprintf("sed -i s/temp=%5.2f/temp=%5.2f/g %s/gochem.inp", lastT, newT, dirname))
 		cq.Run()
 		cq = exec.Command("sh", "-c", fmt.Sprintf("sed -i s/restart=false/restart=true/g %s/gochem.inp", dirname)) //if restart is already true this will do nothing
 		cq.Run()
+		//Scale the velocities upon temperature exchange.
+		//This will do nothing if the temperature didn't chance.
 		err = ScaleVel(lastT, newT, ReadMol.Len(), dirname)
-		CErr(err, fmt.Sprintf("Worker %d, while scaling chunk %d from %5.3f to %5.3f", R.ID, len(R.PrevTs), lastT, newT))
-		//		cq = exec.Command("sh", "-c", fmt.Sprintf("cp mdrestart mdrestartRM_%d_%5.2f", len(R.PrevTs), lastT)) ///////
-		//		cq.Dir = dirname                                                                                      ////////////
-		//		cq.Run()                                                                                              //////////
+		CErr(err, fmt.Sprintf("Worker %d, while scaling chunk %d from %5.3f to %5.3f", R.ID, len(R.PrevTs), lastT, newT)) //////////
 		R.PrevTs = append(R.PrevTs, newT)
 
 	}
 
 }
 
+//This just runs a single point with the given QMHandle (which contains all infor needed to
+//run the QM program) and returns the energy and nil (nothing) or 0 and an error if anything
+//went wrong.
 //I honestly don't quite know how to ensure that I get the potential energy of the last geometry,
 //other than this, to just read the geometry from the mdrestart file, and run an SP calculation.
 func lastPot(xtbsp *qm.XTBHandle, molR *chem.Molecule, dirname string) (float64, error) {
@@ -376,8 +399,13 @@ func lastPot(xtbsp *qm.XTBHandle, molR *chem.Molecule, dirname string) (float64,
 	if err != nil {
 		return 0, err
 	}
-	xtbsp.Run(true)
+	err = xtbsp.Run(true)
+	if err != nil {
+		return 0, err
+	}
+
 	return xtbsp.Energy()
+
 }
 
 //Creates a "SP.xyz"  file with the last coordinates from an xtb MD simulation
@@ -385,10 +413,10 @@ func lastPot(xtbsp *qm.XTBHandle, molR *chem.Molecule, dirname string) (float64,
 func lastGeo(mol *chem.Molecule, dirname string) error {
 	pos := make([][]float64, 0, mol.Len())
 	fin, err := os.Open(dirname + "/mdrestart")
-	defer fin.Close() //If no errors, we'll close fin manually before the function exists. That's fine, we won't check for any errors.
 	if err != nil {
 		return err
 	}
+	defer fin.Close() //If no errors, we'll close fin manually before the function exists. That's fine, we won't check for any errors.
 	bfin := bufio.NewReader(fin)
 	_, err = bfin.ReadString('\n') //the first line doesn't have coordinates
 	if err != nil {
@@ -426,11 +454,11 @@ func lastGeo(mol *chem.Molecule, dirname string) error {
 }
 
 func scaleline(s string, scalefac float64) ([]float64, error) {
-	sf := make([]string, 3, 3)
+	sf := make([]string, 3)
 	sf[0] = strings.Replace(s[0:22], "D", "E", 1)
 	sf[1] = strings.Replace(s[22:44], "D", "E", 1)
 	sf[2] = strings.Replace(s[44:66], "D", "E", 1)
-	ret := make([]float64, 3, 3)
+	ret := make([]float64, 3)
 	var err error
 	for i := 0; i < 3; i++ {
 		ns := strings.TrimSpace(sf[i])
@@ -445,18 +473,21 @@ func scaleline(s string, scalefac float64) ([]float64, error) {
 }
 
 //scales all velocities by Tnew/Told as required by the RE protocol.
-//note that it is the modulus of the velofity that needs to be scaled!
+//note that it is the modulus of the velocity that needs to be scaled!
+//This is a function that I'd definitely want audited.
 func ScaleVel(oldT, newT float64, mollen int, dirname string) error {
+	if oldT == newT {
+		return nil //no need to scale anything.
+	}
 	scalefac := math.Sqrt(newT / oldT)
-	//	fmt.Println("will scale", scalefac) //////////////
 	pos := make([]string, 0, mollen)
 	vels := make([][]float64, 0, mollen)
 	//First we read/parse the original data from the mdrestart file.
 	fin, err := os.Open(dirname + "/mdrestart")
-	defer fin.Close() //If no errors, we'll close fin manually before the function exists. That's fine, we won't check for any errors.
 	if err != nil {
 		return err
 	}
+	defer fin.Close() //If no errors, we'll close fin manually before the function exists. That's fine, we won't check for any errors.
 	bfin := bufio.NewReader(fin)
 	firstline, err := bfin.ReadString('\n')
 	if err != nil {
