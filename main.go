@@ -64,7 +64,7 @@ func CErr(err error, info string) {
 func main() {
 	//There are a few options, most of them not needed normally.
 	method := flag.String("method", "gfnff", "the xTB method for the simulation")
-	binary := flag.String("binary", "xtb", "the xTB method for the simulation")
+	binary := flag.String("binary", "xtb", "the xtb binary to be used")
 	cpus := flag.Int("cpus", -1, "the total CPUs used for the QM calculations. If a number <0 is given, all logical CPUs are used")
 	nreps := flag.Int("replicas", 10, "Maximum amount of replicas to be used. It might not be reached") //this default is for testing, it should probably be changed for production.
 	multi := flag.Int("multi", 1, "multiplicity of the system")
