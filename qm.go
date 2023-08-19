@@ -43,14 +43,14 @@ import (
 
 //This file contains all the tricky stuff.
 
-//This structure is used to pass the temperature and potential energy of a replica to the "control center"
+// This structure is used to pass the temperature and potential energy of a replica to the "control center"
 type M struct {
 	T float64
 	V float64
 }
 
 // A small function to log the temperatures by which our "Reference" system goes.
-//It will print a message at verbose level "2" if a switch happens involving the reference temperature.
+// It will print a message at verbose level "2" if a switch happens involving the reference temperature.
 func SignalT(T1, T2, Tref float64) {
 	if T1 == Tref {
 		LogV(2, "T exchanged:", T2)
@@ -59,10 +59,10 @@ func SignalT(T1, T2, Tref float64) {
 	}
 }
 
-//This is the "central control" that holds the info for all the replicas, runs them,
-//collect their outputs, decides whether each pair should switch temperatures, and, if so,
-//sends each its new T. It also deals with the action needed when all replicas finish running.
-func MDs(mol *chem.Molecule, ctime, ttime int, method string, temps []float64, dielectric float64, cpus int) {
+// This is the "central control" that holds the info for all the replicas, runs them,
+// collect their outputs, decides whether each pair should switch temperatures, and, if so,
+// sends each its new T. It also deals with the action needed when all replicas finish running.
+func MDs(mol *chem.Molecule, ctime, ttime int, method string, temps []float64, dielectric float64, cpus int, binary string) {
 	//hopefully this seed is good enough.
 	rand.Seed(time.Now().UTC().UnixNano())
 	Tref := temps[0]           //This is the reference T, the simulation at this T is the one we actually care about.
@@ -80,6 +80,7 @@ func MDs(mol *chem.Molecule, ctime, ttime int, method string, temps []float64, d
 	Q.Dielectric = dielectric
 	xtb := qm.NewXTBHandle()
 	xtb.SetnCPU(cpus)
+	xtb.SetCommand(binary)
 	xtb.BuildInput(mol.Coords[0], mol, Q)
 	xtb.Run(true) //true is wait for the QM program to finish before continuing execution.
 	var err error
@@ -99,7 +100,7 @@ func MDs(mol *chem.Molecule, ctime, ttime int, method string, temps []float64, d
 	for _, v := range Hs {
 		//we prepare each replica and launch it in a gorutine.
 		//the go statement means the RunReplica function runs concurrently/in parallel.
-		R := &Replica{ID: v.ID, T: v.CurrT, Time: ctime, TotTime: ttime, epsilon: dielectric, C: v.C, Tref: Tref}
+		R := &Replica{ID: v.ID, T: v.CurrT, Time: ctime, TotTime: ttime, epsilon: dielectric, C: v.C, Tref: Tref, Binary: binary}
 		go RunReplica(R, method, mol, rcpus)
 	}
 	//OK, now, way scarier, we need to g o on collecting data for all molecules in a loop, until we get "finishing" values
@@ -199,8 +200,8 @@ func MDs(mol *chem.Molecule, ctime, ttime int, method string, temps []float64, d
 
 }
 
-//Implements the Metropolis function (or so I hope)
-//This is where I have the most doubts.
+// Implements the Metropolis function (or so I hope)
+// This is where I have the most doubts.
 func Metropolis(i, j *M) float64 {
 	b1 := 1 / (chem.R * i.T)
 	b2 := 1 / (chem.R * j.T)
@@ -213,8 +214,8 @@ func Metropolis(i, j *M) float64 {
 
 }
 
-//This structure contain the two channels each replica has to communicate with the "control center"
-//newT where it gets the new temperature from "control" and repdata, where it sends it data to control.
+// This structure contain the two channels each replica has to communicate with the "control center"
+// newT where it gets the new temperature from "control" and repdata, where it sends it data to control.
 type com struct {
 	newT    chan float64   //The program will send the new temperature to the gorutine
 	repdata chan []float64 // Signals the gorutine is waiting for information to arrive on the T channel. A "false" value means the gorutine has finished (and the channel, closed).
@@ -226,11 +227,11 @@ func (C *com) Close() {
 
 }
 
-//when a replica is ready, it will send its last temperature
-//to the 'center' via oldT.
-//the 'center' will use the last temperatures from workers to
-//decide which replicas are exchanging temperatures, and then
-//send the new temperatures to each via newT
+// when a replica is ready, it will send its last temperature
+// to the 'center' via oldT.
+// the 'center' will use the last temperatures from workers to
+// decide which replicas are exchanging temperatures, and then
+// send the new temperatures to each via newT
 func Newcom() *com {
 	c := new(com)
 	//they need to be buffered
@@ -239,9 +240,9 @@ func Newcom() *com {
 	return c
 }
 
-//This structure  has the "control side" info for each replica.
-//The C set of channels is shared with the "replica side"
-//structure, so control and replicas can communicate.
+// This structure  has the "control side" info for each replica.
+// The C set of channels is shared with the "replica side"
+// structure, so control and replicas can communicate.
 type RHandler struct {
 	ID           int
 	C            *com
@@ -261,9 +262,9 @@ func NewRHandler(ID int, initemp float64) *RHandler {
 
 type Handlers []*RHandler
 
-//The 3 following functions are needed for the sort.Sort function to work.
-//it just makes the structure "sortable" by temperature, they are not really
-//meant to be called directly by us.
+// The 3 following functions are needed for the sort.Sort function to work.
+// it just makes the structure "sortable" by temperature, they are not really
+// meant to be called directly by us.
 func (H Handlers) Less(i, j int) bool {
 	return H[i].CurrT < H[i].CurrT
 }
@@ -274,9 +275,9 @@ func (H Handlers) Swap(i, j int) {
 	H[i], H[j] = H[j], H[i]
 }
 
-//This is the "replica side" information for each replica
-//the C set of channels is shared with the corresponding "control side" RHandler
-//structure, so both sides can communicate.
+// This is the "replica side" information for each replica
+// the C set of channels is shared with the corresponding "control side" RHandler
+// structure, so both sides can communicate.
 type Replica struct {
 	ID      int
 	T       float64 //The current temperature
@@ -286,17 +287,18 @@ type Replica struct {
 	TotTime int       //ps
 	epsilon float64
 	Time    int //ps
+	Binary  string
 	C       *com
 }
 
-//Run replica controls the run of one of the replicas in the system. It takes a *Replica structure with the data needed for the whole thing
-//plus the geometry (for reading only!) and the CPUs to be used in the calculation.
-//it will run simulations of R.Time lenght until a total R.TotTime simulation time is reached. After each simulation run it will signal to
-//the "center" the temperature it has been using, and wait for a new temperature from the center. It will set  the temperature to the received value
-//scale the velocities by sqrt(newT/oldT) and restart the simulation. When it has finished the total sim. time. it will report -1 instead of a temperature,
-//and close the channels. RunReplica will also keep track of the number of simulations ran, and all the temperatures used. It will save all trajectorie
-//identified with their number and temperature (so the program can later build a whole trajectory at a given temperature with all the pieces from different
-//replicas, by simply concatenating them together.
+// Run replica controls the run of one of the replicas in the system. It takes a *Replica structure with the data needed for the whole thing
+// plus the geometry (for reading only!) and the CPUs to be used in the calculation.
+// it will run simulations of R.Time lenght until a total R.TotTime simulation time is reached. After each simulation run it will signal to
+// the "center" the temperature it has been using, and wait for a new temperature from the center. It will set  the temperature to the received value
+// scale the velocities by sqrt(newT/oldT) and restart the simulation. When it has finished the total sim. time. it will report -1 instead of a temperature,
+// and close the channels. RunReplica will also keep track of the number of simulations ran, and all the temperatures used. It will save all trajectorie
+// identified with their number and temperature (so the program can later build a whole trajectory at a given temperature with all the pieces from different
+// replicas, by simply concatenating them together.
 func RunReplica(R *Replica, method string, ReadMol *chem.Molecule, cpus int) {
 	dirname := strconv.Itoa(R.ID)
 	err := os.Mkdir(dirname, os.FileMode(0755))                      //we don't need to catch this error, we'll just get int in the next statement.
@@ -316,6 +318,7 @@ func RunReplica(R *Replica, method string, ReadMol *chem.Molecule, cpus int) {
 	Q.MDTemp = R.T
 	Q.Dielectric = R.epsilon
 	xtb := qm.NewXTBHandle()
+	xtb.SetCommand(R.Binary)
 	xtb.SetnCPU(cpus)
 	xtb.SetWorkDir(dirname)
 	xtb.BuildInput(ReadMol.Coords[0], ReadMol, Q)
@@ -329,6 +332,7 @@ func RunReplica(R *Replica, method string, ReadMol *chem.Molecule, cpus int) {
 	xtbsp := qm.NewXTBHandle()
 	xtbsp.SetnCPU(cpus)
 	xtbsp.SetName("SP")
+	xtbsp.SetCommand(R.Binary)
 	xtbsp.SetWorkDir(dirname)
 	xtbsp.BuildInput(ReadMol.Coords[0], ReadMol, Qsp)
 	elapsed := 0
@@ -389,11 +393,11 @@ func RunReplica(R *Replica, method string, ReadMol *chem.Molecule, cpus int) {
 
 }
 
-//This just runs a single point with the given QMHandle (which contains all infor needed to
-//run the QM program) and returns the energy and nil (nothing) or 0 and an error if anything
-//went wrong.
-//I honestly don't quite know how to ensure that I get the potential energy of the last geometry,
-//other than this, to just read the geometry from the mdrestart file, and run an SP calculation.
+// This just runs a single point with the given QMHandle (which contains all infor needed to
+// run the QM program) and returns the energy and nil (nothing) or 0 and an error if anything
+// went wrong.
+// I honestly don't quite know how to ensure that I get the potential energy of the last geometry,
+// other than this, to just read the geometry from the mdrestart file, and run an SP calculation.
 func lastPot(xtbsp *qm.XTBHandle, molR *chem.Molecule, dirname string) (float64, error) {
 	err := lastGeo(molR, dirname)
 	if err != nil {
@@ -408,8 +412,8 @@ func lastPot(xtbsp *qm.XTBHandle, molR *chem.Molecule, dirname string) (float64,
 
 }
 
-//Creates a "SP.xyz"  file with the last coordinates from an xtb MD simulation
-//in the current directory
+// Creates a "SP.xyz"  file with the last coordinates from an xtb MD simulation
+// in the current directory
 func lastGeo(mol *chem.Molecule, dirname string) error {
 	pos := make([][]float64, 0, mol.Len())
 	fin, err := os.Open(dirname + "/mdrestart")
@@ -472,9 +476,9 @@ func scaleline(s string, scalefac float64) ([]float64, error) {
 
 }
 
-//scales all velocities by Tnew/Told as required by the RE protocol.
-//note that it is the modulus of the velocity that needs to be scaled!
-//This is a function that I'd definitely want audited.
+// scales all velocities by Tnew/Told as required by the RE protocol.
+// note that it is the modulus of the velocity that needs to be scaled!
+// This is a function that I'd definitely want audited.
 func ScaleVel(oldT, newT float64, mollen int, dirname string) error {
 	if oldT == newT {
 		return nil //no need to scale anything.

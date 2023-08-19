@@ -40,13 +40,13 @@ import (
 	chem "github.com/rmera/gochem"
 )
 
-//This is the verbosity level. It is set by the -verbose flag
-//I don't want to pass it around to every single function, so
-//I just make it global.
+// This is the verbosity level. It is set by the -verbose flag
+// I don't want to pass it around to every single function, so
+// I just make it global.
 var vref int
 
-//If v is true, prints the d arguments to stderr
-//otherwise, does nothing.
+// If v is true, prints the d arguments to stderr
+// otherwise, does nothing.
 func LogV(v int, d ...interface{}) {
 	if v >= vref {
 		fmt.Fprintln(os.Stderr, d...)
@@ -54,7 +54,7 @@ func LogV(v int, d ...interface{}) {
 
 }
 
-//Just crashes the program with an error
+// Just crashes the program with an error
 func CErr(err error, info string) {
 	if err != nil {
 		log.Fatal(err, info)
@@ -64,6 +64,7 @@ func CErr(err error, info string) {
 func main() {
 	//There are a few options, most of them not needed normally.
 	method := flag.String("method", "gfnff", "the xTB method for the simulation")
+	binary := flag.String("binary", "xtb", "the xTB method for the simulation")
 	cpus := flag.Int("cpus", -1, "the total CPUs used for the QM calculations. If a number <0 is given, all logical CPUs are used")
 	nreps := flag.Int("replicas", 10, "Maximum amount of replicas to be used. It might not be reached") //this default is for testing, it should probably be changed for production.
 	multi := flag.Int("multi", 1, "multiplicity of the system")
@@ -111,7 +112,7 @@ func main() {
 		*cpus = runtime.NumCPU()
 	}
 	//Here is where the magic happens :-)
-	MDs(mol, *exrate, totaltime, *method, temps, *dielectric, *cpus)
+	MDs(mol, *exrate, totaltime, *method, temps, *dielectric, *cpus, *binary)
 
 	//We have accumulated several "trj" files, which we already collected in one trajectory.
 	//We delete them now, unless the user says not to.
@@ -126,10 +127,10 @@ func main() {
 
 }
 
-//Gen temps generates nreps-1 temperatures for the RE procedure
-//given the first one, Tc, and the number of atoms in the system.
-//It uses (or so I hope!) the procedure outlined in the Gromacs
-//2021.1 Manual, p340
+// Gen temps generates nreps-1 temperatures for the RE procedure
+// given the first one, Tc, and the number of atoms in the system.
+// It uses (or so I hope!) the procedure outlined in the Gromacs
+// 2021.1 Manual, p340
 func GenTemps(Tc, Th float64, nreps, natoms int) []float64 {
 	temps := make([]float64, 1, nreps)
 	temps[0] = Tc
