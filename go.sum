@@ -20,8 +20,10 @@ github.com/phpdave11/gofpdi v1.0.12/go.mod h1:vBmVV0Do6hSBHC8uKUQ71JGW+ZGQq74llk
 github.com/pkg/errors v0.8.1/go.mod h1:bwawxfHBFNV+L2hUp1rHADufV3IMtnDRdf1r5NINEl0=
 github.com/pkg/errors v0.9.1/go.mod h1:bwawxfHBFNV+L2hUp1rHADufV3IMtnDRdf1r5NINEl0=
 github.com/pmezard/go-difflib v1.0.0/go.mod h1:iKH77koFhYxTK1pcRnkKkqfTogsbg7gZNVY4sRDYZ/4=
-github.com/rmera/gochem v0.6.3 h1:Kh+1veo/ktfjSttnzcYLOWnZL+8izRKsjQ6TrWU+jUk=
-github.com/rmera/gochem v0.6.3/go.mod h1:lLCev/FHDNsd1EK7W/1DoKW4OPTv4bD1FkarLBz06GU=
+github.com/rmera/gochem v0.7.0 h1:onuQLsz9VLMRWTCJSH8GpNa8RF//U8nb/FsE6aMJEmA=
+github.com/rmera/gochem v0.7.0/go.mod h1:l1YWf1VhbI38YAh1fSLRJIsdLODmjiVIaIp8fK8Nqo4=
+github.com/rmera/scu v0.2.0 h1:cicjO2l/7vppuPfi5XQVqYjYHZA+8cWkcS+5mxD7T3U=
+github.com/rmera/scu v0.2.0/go.mod h1:bud3+C6l94vgt3UEQwOd5Oo7tlcEwEojMw2G8C9jyJs=
 github.com/ruudk/golang-pdf417 v0.0.0-20181029194003-1af4ab5afa58/go.mod h1:6lfFZQK844Gfx8o5WFuvpxWRwnSoipWe/p622j1v06w=
 github.com/skelterjohn/go.matrix v0.0.0-20130517144113-daa59528eefd h1:+ZLYzP9SYC3WU9buyb9H0l9DQxqVFOCkDG8QnNBMAlA=
 github.com/skelterjohn/go.matrix v0.0.0-20130517144113-daa59528eefd/go.mod h1:x7ui0Rh4QxcWEOgIfa3cr9q4W/wyLTDdzISxBmLVeX8=
@@ -60,13 +62,11 @@ golang.org/x/tools v0.0.0-20190206041539-40960b6deb8e/go.mod h1:n7NCudcB/nEzxVGm
 golang.org/x/tools v0.0.0-20190927191325-030b2cf1153e/go.mod h1:b+2E5dAYhXwXZwtnZ6UAqBI28+e2cm9otk0dWdXHAEo=
 golang.org/x/xerrors v0.0.0-20190717185122-a985d3407aa7/go.mod h1:I/5z698sn9Ka8TeJc9MKroUUfqBBauWjQqLJ2OPfmY0=
 gonum.org/v1/gonum v0.0.0-20180816165407-929014505bf4/go.mod h1:Y+Yx5eoAFn32cQvJDxZx5Dpnq+c3wtXuadVZAcxbbBo=
-gonum.org/v1/gonum v0.7.0/go.mod h1:L02bwd0sqlsvRv41G7wGWFCsVNZFv/k1xzGIxeANHGM=
 gonum.org/v1/gonum v0.8.2/go.mod h1:oe/vMfY3deqTw+1EZJhuvEW2iwGF1bW9wwu7XCu0+v0=
 gonum.org/v1/gonum v0.9.1 h1:HCWmqqNoELL0RAQeKBXWtkp04mGk8koafcB4He6+uhc=
 gonum.org/v1/gonum v0.9.1/go.mod h1:TZumC3NeyVQskjXqmyWt4S3bINhy7B4eYwW69EbyX+0=
 gonum.org/v1/netlib v0.0.0-20190313105609-8cb42192e0e0 h1:OE9mWmgKkjJyEmDAAtGMPjXu+YNeGvK9VTSHY6+Qihc=
 gonum.org/v1/netlib v0.0.0-20190313105609-8cb42192e0e0/go.mod h1:wa6Ws7BG/ESfp6dHfk7C6KdzKA7wR7u/rKwOGE66zvw=
 gonum.org/v1/plot v0.0.0-20190515093506-e2840ee46a6b/go.mod h1:Wt8AAjI+ypCyYX3nZBvf6cAIx93T+c/OS2HFAYskSZc=
-gonum.org/v1/plot v0.7.0/go.mod h1:2wtU6YrrdQAhAF9+MTd5tOQjrov/zF70b1i99Npjvgo=
 gonum.org/v1/plot v0.9.0/go.mod h1:3Pcqqmp6RHvJI72kgb8fThyUnav364FOsdDo2aGW5lY=
 rsc.io/pdf v0.1.1/go.mod h1:n8OzWcQ6Sp37PL01nO98y4iUCRdTGarVfzxY20ICaU4=

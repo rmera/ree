@@ -39,6 +39,7 @@ import (
 
 	chem "github.com/rmera/gochem"
 	"github.com/rmera/gochem/qm"
+	"github.com/rmera/scu"
 )
 
 //This file contains all the tricky stuff.
@@ -375,18 +376,14 @@ func RunReplica(R *Replica, method string, ReadMol *chem.Molecule, cpus int) {
 		//We now need to change the temperature on the xtb input file to the new value
 		//which could be equal to the previous one, if this worker didn't exchange temperatures
 		//on this cycle.
-
-		//More recent note: There is actually a library that implements the functions of AWK into Go
-		//so it might actually be pretty easy to do this with Go functions. Still, using sed is dirty,
-		//but it does the job, and I suspect it's pretty fast.
-		cq := exec.Command("sh", "-c", fmt.Sprintf("sed -i s/temp=%5.2f/temp=%5.2f/g %s/gochem.inp", lastT, newT, dirname))
-		cq.Run()
-		cq = exec.Command("sh", "-c", fmt.Sprintf("sed -i s/restart=false/restart=true/g %s/gochem.inp", dirname)) //if restart is already true this will do nothing
-		cq.Run()
+		sf := fmt.Sprintf
+		gcfilename := sf("%s/gochem.inp", dirname)
+		scu.ReplaceInFile(gcfilename, gcfilename, sf("temp=%5.2f", lastT), sf("temp=%5.2f", newT))
+		scu.ReplaceInFile(gcfilename, gcfilename, "restart=false", "restart=true")
 		//Scale the velocities upon temperature exchange.
 		//This will do nothing if the temperature didn't chance.
 		err = ScaleVel(lastT, newT, ReadMol.Len(), dirname)
-		CErr(err, fmt.Sprintf("Worker %d, while scaling chunk %d from %5.3f to %5.3f", R.ID, len(R.PrevTs), lastT, newT)) //////////
+		CErr(err, sf("Worker %d, while scaling chunk %d from %5.3f to %5.3f", R.ID, len(R.PrevTs), lastT, newT)) //////////
 		R.PrevTs = append(R.PrevTs, newT)
 
 	}
@@ -438,11 +435,11 @@ func lastGeo(mol *chem.Molecule, dirname string) error {
 		pos = append(pos, p)
 
 	}
-	//I assume the atomic positions are in Bohrs
 	lg, err := os.Create(dirname + "/SP.xyz")
 	if err != nil {
 		return err
 	}
+	//I assume the atomic positions are in Bohrs
 	b2a := chem.Bohr2A
 	lg.WriteString(fmt.Sprintf("%d\n\n", mol.Len()))
 	for i, v := range pos {
